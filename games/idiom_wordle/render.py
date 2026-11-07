@@ -12,7 +12,11 @@ from .hints import get_hint
 from .pinyin_display import display_final, marked_final, tone_mark
 
 FONT_PATH = RESOURCE_DIR / "fonts" / "NotoSansCJKsc-Regular.otf"
-COLORS = {"exact": "#238653", "misplaced": "#b77916", "none": "#747c88"}
+COLORS = {"exact": "#007f3d", "misplaced": "#9a5b00", "none": "#626970"}
+BACKGROUND_COLOR = "#fff8d6"
+CELL_BACKGROUND_COLOR = "#fffbed"
+BORDER_COLOR = "#dfcf91"
+PINYIN_FONT_SIZE = 28
 PADDING = 16
 GAP = 12
 CELL_WIDTH = 144
@@ -78,10 +82,10 @@ def _render_rows(
     rows = max(1, len(board))
     width = PADDING * 2 + columns * CELL_WIDTH + (columns - 1) * GAP
     height = PADDING * 2 + rows * CELL_HEIGHT + (rows - 1) * GAP
-    image = Image.new("RGB", (width, height), "#f6f7fb")
+    image = Image.new("RGB", (width, height), BACKGROUND_COLOR)
     draw = ImageDraw.Draw(image)
     char_font = ImageFont.truetype(str(font_path), 50)
-    pinyin_font = ImageFont.truetype(str(font_path), 24)
+    pinyin_font = ImageFont.truetype(str(font_path), PINYIN_FONT_SIZE)
     for row in range(rows):
         y = PADDING + row * (CELL_HEIGHT + GAP)
         for col in range(columns):
@@ -89,8 +93,8 @@ def _render_rows(
             draw.rounded_rectangle(
                 (x, y, x + CELL_WIDTH - 1, y + CELL_HEIGHT - 1),
                 radius=10,
-                fill="white",
-                outline="#d3d8e0",
+                fill=CELL_BACKGROUND_COLOR,
+                outline=BORDER_COLOR,
             )
             if not board:
                 continue
@@ -185,6 +189,6 @@ def _draw_pinyin(image, draw, center_x, baseline, cell, font):
                 (positions[index], baseline - 21),
                 mark,
                 anchor="ms",
-                font=font.font_variant(size=16),
+                font=font.font_variant(size=18),
                 fill=COLORS[cell.matches[2]],
             )

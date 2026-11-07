@@ -145,3 +145,32 @@ def test_custom_idle_timeout_applies_to_start_valid_guess_and_expiry():
 def test_invalid_idle_timeout_is_rejected(timeout):
     with pytest.raises(ValueError, match="finite and positive"):
         IdiomGame.create(now=0, answer="一心一意", idle_seconds=timeout)
+
+
+def test_random_answers_use_common_pool_but_rare_idioms_remain_valid_guesses(
+    monkeypatch,
+):
+    from games.idiom_wordle import core
+
+    common = core.load_answers()
+    selected = []
+
+    def choose(pool):
+        selected.append(tuple(pool))
+        return "一心一意"
+
+    monkeypatch.setattr(core.random, "choice", choose)
+    g = core.IdiomGame.create(now=0)
+    assert selected == [common]
+    assert g.answer == "一心一意"
+    assert "一丁不识" not in common
+    assert g.submit("一丁不识", now=1) == "accepted"
+    assert len(g.guesses) == 1
+
+
+@pytest.mark.parametrize("pool", [(), ("今天吃饭",)])
+def test_random_answer_pool_must_not_be_empty_or_unknown(pool):
+    with pytest.raises(ValueError, match="known idioms"):
+        IdiomGame.create(
+            now=0, words={"一心一意": "yi1 xin1 yi1 yi4"}, answer_pool=pool
+        )

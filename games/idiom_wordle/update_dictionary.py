@@ -39,6 +39,16 @@ def build_dictionary(
     return words
 
 
+def build_answer_pool(frequent: list[str], words: dict[str, str]) -> list[str]:
+    """Keep reviewed frequent idioms with a validated local pronunciation."""
+    if any(not is_candidate(word) for word in frequent):
+        raise ValueError("Answer candidates must be four Chinese characters")
+    answers = sorted(set(frequent) & words.keys())
+    if not answers:
+        raise ValueError("Common answer pool is empty")
+    return answers
+
+
 def main():
     source = RESOURCE_DIR / "handle"
     idioms = (source / "idioms.txt").read_text(encoding="utf-8").splitlines()
@@ -47,12 +57,28 @@ def main():
         (RESOURCE_DIR / "pronunciation_overrides.json").read_text(encoding="utf-8")
     )
     words = build_dictionary(idioms, polyphones, overrides)
+    frequent = json.loads(
+        (RESOURCE_DIR / "chinese_wordle" / "freq-idioms.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    answers = build_answer_pool(frequent, words)
     # Build and validate everything before replacing the runtime dictionary.
     output = RESOURCE_DIR / "idioms.json"
     output.write_text(
         json.dumps(words, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
     )
+    (RESOURCE_DIR / "answers.json").write_text(
+        json.dumps(answers, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+    )
     print(f"Updated {output.name}: {len(words)} idioms")
+    print(f"Updated answers.json: {len(answers)} common answers")
+    missing = sorted(set(frequent) - words.keys())
+    if missing:
+        print(
+            "Skipped answer candidates missing from the dictionary: "
+            + ", ".join(missing)
+        )
 
 
 if __name__ == "__main__":

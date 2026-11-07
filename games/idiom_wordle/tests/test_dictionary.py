@@ -44,3 +44,46 @@ def test_generator_priorities_neutral_tone_and_stable_order():
 def test_invalid_sources_are_rejected(idioms, polyphones, overrides):
     with pytest.raises(ValueError):
         build_dictionary(idioms, polyphones, overrides)
+
+
+def test_common_answer_pool_matches_reviewed_reference():
+    from games.idiom_wordle.core import load_answers
+
+    words = load_words()
+    frequent = json.loads(
+        (RESOURCE_DIR / "chinese_wordle" / "freq-idioms.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    answers = load_answers(words)
+    assert len(answers) == 1415
+    assert set(answers) == set(frequent) & words.keys()
+    assert "一心一意" in answers
+    assert "全力以赴" in answers
+    assert "一丁不识" not in answers
+    assert "一不扭众" not in answers
+    assert set(frequent) - words.keys() == {"追根溯源"}
+
+
+def test_answer_generation_only_keeps_supported_frequent_candidates():
+    from games.idiom_wordle.update_dictionary import build_answer_pool
+
+    assert build_answer_pool(
+        ["一心一意", "画蛇添足", "一心一意"], {"一心一意": "yi1 xin1 yi1 yi4"}
+    ) == ["一心一意"]
+    with pytest.raises(ValueError, match="empty"):
+        build_answer_pool(["一心一意"], {})
+    with pytest.raises(ValueError, match="four Chinese"):
+        build_answer_pool(["abc"], {})
+
+
+@pytest.mark.parametrize(
+    "data", [[], {}, ["今天吃饭"], ["一心一意", "一心一意"], [None]]
+)
+def test_invalid_answer_resource_is_rejected(tmp_path, data):
+    from games.idiom_wordle.core import load_answers
+
+    path = tmp_path / "answers.json"
+    path.write_text(json.dumps(data))
+    with pytest.raises(ValueError):
+        load_answers({"一心一意": "yi1 xin1 yi1 yi4"}, path)

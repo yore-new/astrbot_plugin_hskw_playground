@@ -12,6 +12,7 @@ AstrBot 插件。每个群共同玩一局，不同群、平台实例及私聊互
 
 汉字、拼音声母/韵母、声调分别着色：绿色表示对应位置匹配，黄色表示存在但错位，灰色表示无匹配项。
 拼音使用真实声调符号（如 `huà`、`shé`、`tiān`、`zú`），轻声不标调。汉字完全一致才算猜中。
+图片采用淡黄色背景与更清晰的绿色反馈，拼音和声调放大显示。
 棋盘只保留方框、汉字和拼音；规则在开局时通过独立文字消息说明。
 普通猜测与提示命令只发图；所有图片独立成条，避免文字挤占图片预览。
 群聊猜中时会 @ 猜中者并简短祝贺，再发送终局图片。
@@ -34,9 +35,11 @@ AstrBot 插件。每个群共同玩一局，不同群、平台实例及私聊互
 游戏状态只存内存，机器人重启或插件重载会结束现有游戏。
 图片在内存中绘制并发送，不向插件目录写运行时文件。超时通知使用开局消息的路由，
 部分平台可能限制主动发送；即使通知失败，游戏仍会结束并释放。
-当前自带 Handle 词库的 29,760 条四字成语，包含普通词库与多音字词库。
+随机出题使用 1,415 条经过高频与人工筛选的常用成语，避免抽到大量偏门词。
+猜测校验保留 Handle 词库的 29,760 条四字成语，包含普通词库与多音字词库。
 普通词条由 pypinyin 生成读音，多音字使用上游校正；本地读音覆盖优先。
-词库版本、许可及离线更新命令见 [词库来源说明](games/idiom_wordle/resources/handle/SOURCES.md)。
+词库版本、许可及离线更新命令见 [完整词库来源](games/idiom_wordle/resources/handle/SOURCES.md)
+及 [常用出题池来源](games/idiom_wordle/resources/chinese_wordle/SOURCES.md)。
 
 ## 插件配置
 
@@ -69,6 +72,8 @@ python3 -m venv .venv
 
 游戏设计及拼音匹配规则参考 [汉兜 Handle / Anthony Fu](https://github.com/antfu/handle)
 及 [在线游戏](https://handle.antfu.me/)。拼音判定按 Handle 的算法移植为 Python，保留 [原始 MIT 许可](games/idiom_wordle/LICENSE.Handle)；成语及多音字数据也来自 Handle，保留同一 MIT 许可。
+出题池参考 [AllanChain/chinese-wordle](https://github.com/AllanChain/chinese-wordle)，
+来源项目采用 BSD-3-Clause，保留 [原始许可](games/idiom_wordle/LICENSE.ChineseWordle)。
 遵循 [AstrBot 开发指南](https://docs.astrbot.app/dev/star/plugin-new.html)。
 代码沿用仓库 AGPL-3.0 许可，见 [LICENSE](LICENSE)。
 随附中文字体来自 [Noto CJK](https://github.com/notofonts/noto-cjk)，

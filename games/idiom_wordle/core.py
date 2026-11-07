@@ -65,6 +65,22 @@ def load_words(path: Path = RESOURCE_DIR / "idioms.json") -> dict[str, str]:
     return words
 
 
+def load_answers(
+    words: dict[str, str] | None = None,
+    path: Path = RESOURCE_DIR / "answers.json",
+) -> tuple[str, ...]:
+    """Load common answers separately from the larger accepted-guess dictionary."""
+    words = load_words() if words is None else words
+    answers = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(answers, list) or not answers:
+        raise ValueError("Answer pool must be a nonempty list")
+    if any(not isinstance(word, str) or word not in words for word in answers):
+        raise ValueError("Every answer must be in the guess dictionary")
+    if len(answers) != len(set(answers)):
+        raise ValueError("Answer pool must not contain duplicates")
+    return tuple(answers)
+
+
 def parse_word(word: str, words: dict[str, str]) -> tuple[Syllable, ...]:
     if word in words:
         readings = words[word].split()
@@ -156,6 +172,7 @@ class IdiomGame:
         words: dict[str, str] | None = None,
         answer: str | None = None,
         idle_seconds: float = IDLE_SECONDS,
+        answer_pool: tuple[str, ...] | None = None,
     ) -> IdiomGame:
         try:
             if isinstance(idle_seconds, bool):
@@ -165,10 +182,16 @@ class IdiomGame:
             raise ValueError("Idle timeout must be finite and positive") from exc
         if not math.isfinite(idle_seconds) or idle_seconds <= 0:
             raise ValueError("Idle timeout must be finite and positive")
+        use_default_pool = words is None
         words = load_words() if words is None else words
         if not words:
             raise ValueError("Empty answer dictionary")
-        answer = random.choice(list(words)) if answer is None else answer
+        if answer is None:
+            if answer_pool is None:
+                answer_pool = load_answers(words) if use_default_pool else tuple(words)
+            if not answer_pool or any(word not in words for word in answer_pool):
+                raise ValueError("Answer pool must contain known idioms")
+            answer = random.choice(answer_pool)
         if answer not in words:
             raise ValueError("Answer must be in the dictionary")
         evaluate(answer, answer, words)

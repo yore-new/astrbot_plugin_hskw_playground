@@ -757,3 +757,26 @@ def test_notice_delivery_failure_does_not_skip_answer_image(adapter):
         await plugin.terminate()
 
     asyncio.run(scenario())
+
+
+def test_astrbot_start_passes_common_answers_to_game_creation(adapter, monkeypatch):
+    async def scenario():
+        plugin = adapter.PlaygroundPlugin(Context())
+        selected = []
+
+        def choose(pool):
+            selected.append(tuple(pool))
+            return "一心一意"
+
+        monkeypatch.setattr(
+            adapter.IdiomGame.create.__globals__["random"], "choice", choose
+        )
+        start = Event()
+        await plugin.start_idiom(start)
+        assert selected == [plugin.answers]
+        assert len(plugin.answers) == 1415
+        assert "一丁不识" not in plugin.answers
+        assert plugin.manager.get(plugin._scope(start)).game.answer == "一心一意"
+        await plugin.terminate()
+
+    asyncio.run(scenario())

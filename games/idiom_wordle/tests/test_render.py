@@ -132,3 +132,35 @@ def test_third_tone_i_is_not_overlaid_with_a_dot(drawn_text):
     marked = next(call for call in drawn_text if call[1] == "ǐ")
     assert not any(call[1] == "ı" for call in drawn_text)
     assert not any(call[0] == marked[0] and call[1] == "i" for call in drawn_text)
+
+
+@pytest.mark.parametrize("view", ["board", "hint", "answer"])
+def test_all_views_use_pale_yellow_background_and_cells(view):
+    game = IdiomGame.create(now=0, answer="一心一意")
+    if view == "answer":
+        game.stop()
+    png = render_hint(game) if view == "hint" else render_board(game)
+    image = Image.open(BytesIO(png))
+    assert image.getpixel((0, 0)) == (255, 248, 214)
+    assert image.getpixel((20, 76)) == (255, 251, 237)
+
+
+def test_feedback_colors_remain_readable_on_warm_backgrounds():
+    from games.idiom_wordle.render import BACKGROUND_COLOR, CELL_BACKGROUND_COLOR
+
+    def luminance(hex_color):
+        rgb = [int(hex_color[i : i + 2], 16) / 255 for i in (1, 3, 5)]
+        linear = [
+            v / 12.92 if v <= 0.04045 else ((v + 0.055) / 1.055) ** 2.4 for v in rgb
+        ]
+        return sum(v * weight for v, weight in zip(linear, (0.2126, 0.7152, 0.0722)))
+
+    for background in (BACKGROUND_COLOR, CELL_BACKGROUND_COLOR):
+        for foreground in COLORS.values():
+            light, dark = sorted(
+                [luminance(background), luminance(foreground)], reverse=True
+            )
+            assert (light + 0.05) / (dark + 0.05) >= 4.5
+    green = tuple(int(COLORS["exact"][i : i + 2], 16) for i in (1, 3, 5))
+    assert green[1] > max(green[0], green[2])
+    assert min(green) == 0  # Saturated green, rather than a muted gray-green.

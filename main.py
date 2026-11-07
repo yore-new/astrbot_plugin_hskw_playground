@@ -11,7 +11,7 @@ from astrbot.api.message_components import At, Image, Plain
 from astrbot.api.star import Context, Star
 
 from .game_manager import GameManager, Scope, Session
-from .games.idiom_wordle.core import IDLE_SECONDS, IdiomGame, load_words
+from .games.idiom_wordle.core import IDLE_SECONDS, IdiomGame, load_answers, load_words
 from .games.idiom_wordle.hints import format_hint
 from .games.idiom_wordle.render import render_board, render_hint
 
@@ -23,6 +23,7 @@ class PlaygroundPlugin(Star):
         self.manager = GameManager()
         self.locks = defaultdict(asyncio.Lock)
         self.words = load_words()
+        self.answers = load_answers(self.words)
         self.clock = time.monotonic
         self.expiry_task = None
         self.expiry_workers = set()
@@ -30,7 +31,10 @@ class PlaygroundPlugin(Star):
     async def initialize(self):
         # Fail early if the bundled font cannot be loaded.
         await asyncio.to_thread(
-            render_board, IdiomGame.create(now=self.clock(), words=self.words)
+            render_board,
+            IdiomGame.create(
+                now=self.clock(), words=self.words, answer_pool=self.answers
+            ),
         )
         self.expiry_task = asyncio.create_task(self._watch_expiry())
 
@@ -166,7 +170,10 @@ class PlaygroundPlugin(Star):
                 )
                 return
             game = IdiomGame.create(
-                now=self.clock(), words=self.words, idle_seconds=self._idle_seconds()
+                now=self.clock(),
+                words=self.words,
+                idle_seconds=self._idle_seconds(),
+                answer_pool=self.answers,
             )
             self.manager.start(scope, game, event.unified_msg_origin)
             await self._send(
