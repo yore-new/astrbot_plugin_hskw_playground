@@ -16,10 +16,18 @@ class Plain:
         self.text = text
 
 
-class Image:
+class At:
+    def __init__(self, qq):
+        self.qq = qq
+
+
+class Image(tuple):
+    def __new__(cls, data):
+        return super().__new__(cls, ("image", data))
+
     @staticmethod
     def fromBytes(data):
-        return ("image", data)
+        return Image(data)
 
 
 class MessageChain:
@@ -103,7 +111,7 @@ def adapter(monkeypatch):
                 EventMessageType=SimpleNamespace(ALL="all"),
             ),
         },
-        "astrbot.api.message_components": {"Image": Image, "Plain": Plain},
+        "astrbot.api.message_components": {"Image": Image, "Plain": Plain, "At": At},
         "astrbot.api.star": {"Context": Context, "Star": Star},
     }
     for name, attrs in modules.items():
@@ -138,11 +146,15 @@ def test_concurrent_start_group_sharing_and_stop(adapter):
         await plugin.on_guess(guess)
         assert guess.stopped
         assert not plugin.manager.sessions
-        assert "恭喜" in guess.sent[0][0].text
+        assert isinstance(guess.sent[0][0], At)
+        assert guess.sent[0][0].qq == "u3"
+        assert "恭喜" in guess.sent[0][1].text
+        assert guess.sent[1] == [Image(b"PNG")]
         await plugin.start_idiom(a)
         await plugin.stop_idiom(b)
         assert not plugin.manager.sessions
-        assert "本轮已结束" in b.sent[-1][0].text
+        assert "本轮已结束" in b.sent[-2][0].text
+        assert b.sent[-1] == [Image(b"PNG")]
 
     asyncio.run(scenario())
 
@@ -172,7 +184,7 @@ def test_timer_reset_invalid_duplicate_and_passive_expiry(adapter):
         assert plugin.manager.get(scope) is None
         assert session.game.status == "timeout"
         assert context.sent[0][0] == a.unified_msg_origin
-        assert context.chains[0][-1] == ("image", b"PNG")
+        assert context.chains[-1] == [Image(b"PNG")]
         # A stale expiry callback must leave the new game untouched.
         await plugin.start_idiom(a)
         await plugin._expire_scope(scope, session)
@@ -507,8 +519,8 @@ def test_hint_rendering_failure_returns_only_known_information(adapter, monkeypa
 
         monkeypatch.setattr(adapter, "render_hint", broken)
         await plugin.hint_idiom(hint)
-        assert hint.sent[-1][1].text == "\n" + "\n".join(["?  ? ? ?"] * 4)
-        assert session.game.answer not in hint.sent[-1][1].text
+        assert hint.sent[-1][0].text == "\n".join(["?  ? ? ?"] * 4)
+        assert session.game.answer not in hint.sent[-1][0].text
         assert session.game.deadline == 300
         assert not session.game.guesses
         await plugin.terminate()
@@ -535,7 +547,7 @@ def test_configured_timeout_controls_deadlines_messages_and_new_games(adapter):
         guess = Event(word)
         await plugin.on_guess(guess)
         assert session.game.deadline == 299
-        assert "150 秒" in guess.sent[0][0].text
+        assert guess.sent == [[Image(b"PNG")]]
         await plugin.hint_idiom(Event())
         assert session.game.deadline == 299
         await plugin.on_guess(Event("今天吃饭"))
@@ -546,7 +558,7 @@ def test_configured_timeout_controls_deadlines_messages_and_new_games(adapter):
         assert not plugin.manager.sessions
         await plugin.start_idiom(start)
         assert plugin.manager.get(scope).game.deadline == 359
-        assert "60 秒" in start.sent[-1][0].text
+        assert "60 秒" in start.sent[-2][0].text
         await plugin.terminate()
 
     asyncio.run(scenario())
@@ -621,6 +633,126 @@ def test_terminal_answer_is_delivered_as_an_image(
         assert session.game.answer not in "".join(
             c.text for c in chain if isinstance(c, Plain)
         )
+        assert not plugin.manager.sessions
+        await plugin.terminate()
+
+    asyncio.run(scenario())
+
+
+def assert_standalone_images(messages):
+    for message in messages:
+        if any(isinstance(c, Image) for c in message):
+            assert len(message) == 1
+            assert isinstance(message[0], Image)
+
+
+def test_hints_and_ongoing_guesses_send_only_images(adapter):
+    async def scenario():
+        plugin = adapter.PlaygroundPlugin(Context())
+        plugin.clock = lambda: 0
+        start = Event()
+        await plugin.start_idiom(start)
+        session = plugin.manager.get(plugin._scope(start))
+        word = next(w for w in plugin.words if w != session.game.answer)
+        guess = Event(word)
+        await plugin.on_guess(guess)
+        assert guess.sent == [[Image(b"PNG")]]
+        hint = Event()
+        await plugin.hint_idiom(hint)
+        assert hint.sent == [[Image(b"HINT")]]
+        assert session.game.deadline == 300
+        assert len(session.game.guesses) == 1
+        assert_standalone_images(start.sent)
+        await plugin.terminate()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("group", ["g1", ""])
+def test_winner_notice_mentions_actual_group_winner_and_keeps_image_separate(
+    adapter, group
+):
+    async def scenario():
+        plugin = adapter.PlaygroundPlugin(Context())
+        start = Event(group=group, sender="starter")
+        await plugin.start_idiom(start)
+        session = plugin.manager.get(plugin._scope(start))
+        winner = Event(
+            session.game.answer,
+            group=group,
+            sender="winner" if group else "starter",
+        )
+        await plugin.on_guess(winner)
+        assert len(winner.sent) == 2
+        notice, board = winner.sent
+        if group:
+            assert isinstance(notice[0], At)
+            assert notice[0].qq == "winner"
+        else:
+            assert not any(isinstance(c, At) for c in notice)
+        assert (
+            "".join(c.text for c in notice if isinstance(c, Plain)).strip()
+            == "恭喜猜中！"
+        )
+        assert board == [Image(b"PNG")]
+        assert_standalone_images(winner.sent)
+        assert not plugin.manager.sessions
+        await plugin.terminate()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("ending", ["timeout", "stopped", "lost"])
+def test_terminal_notice_and_board_are_delivered_as_separate_messages(adapter, ending):
+    async def scenario():
+        context = Context()
+        plugin = adapter.PlaygroundPlugin(context)
+        plugin.clock = lambda: 0
+        start = Event()
+        await plugin.start_idiom(start)
+        scope = plugin._scope(start)
+        session = plugin.manager.get(scope)
+        if ending == "timeout":
+            session.game.deadline = 0
+            await plugin._expire_scope(scope, session)
+            messages = context.chains
+        elif ending == "stopped":
+            start.sent.clear()
+            await plugin.stop_idiom(start)
+            messages = start.sent
+        else:
+            choices = [w for w in plugin.words if w != session.game.answer]
+            for word in choices[:9]:
+                session.game.submit(word, now=0)
+            final_guess = Event(choices[9])
+            await plugin.on_guess(final_guess)
+            messages = final_guess.sent
+        assert len(messages) == 2
+        assert all(isinstance(c, Plain) for c in messages[0])
+        assert messages[1] == [Image(b"PNG")]
+        assert_standalone_images(messages)
+        assert not plugin.manager.sessions
+        await plugin.terminate()
+
+    asyncio.run(scenario())
+
+
+def test_notice_delivery_failure_does_not_skip_answer_image(adapter):
+    async def scenario():
+        plugin = adapter.PlaygroundPlugin(Context())
+        start = Event()
+        await plugin.start_idiom(start)
+        session = plugin.manager.get(plugin._scope(start))
+
+        class NoticeFailure(Event):
+            async def send(self, chain):
+                if any(isinstance(c, Plain) for c in chain):
+                    raise RuntimeError("Notice delivery unavailable")
+                await super().send(chain)
+
+        winner = NoticeFailure(session.game.answer, sender="winner")
+        await plugin.on_guess(winner)
+        assert winner.sent == [[Image(b"PNG")]]
         assert not plugin.manager.sessions
         await plugin.terminate()
 

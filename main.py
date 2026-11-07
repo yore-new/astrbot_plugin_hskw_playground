@@ -7,7 +7,7 @@ from collections import defaultdict
 
 from astrbot.api import AstrBotConfig, logger
 from astrbot.api.event import AstrMessageEvent, MessageChain, filter
-from astrbot.api.message_components import Image, Plain
+from astrbot.api.message_components import At, Image, Plain
 from astrbot.api.star import Context, Star
 
 from .game_manager import GameManager, Scope, Session
@@ -58,7 +58,7 @@ class PlaygroundPlugin(Star):
         return seconds
 
     async def _build_chain(self, text, game=None):
-        chain = [Plain(text)]
+        chain = [Plain(text)] if text else []
         if game is not None:
             try:
                 png = await asyncio.to_thread(render_board, game)
@@ -81,13 +81,37 @@ class PlaygroundPlugin(Star):
                     )
         return chain
 
-    async def _send(self, event, text, game=None):
+    @staticmethod
+    def _image_messages(chain):
+        """Keep each image in its own message, preserving component order."""
+        messages = []
+        pending = []
+        for component in chain:
+            if isinstance(component, Image):
+                if pending:
+                    messages.append(pending)
+                    pending = []
+                messages.append([component])
+            else:
+                pending.append(component)
+        if pending:
+            messages.append(pending)
+        return messages
+
+    async def _deliver(self, chain, send):
+        for message in self._image_messages(chain):
+            try:
+                await asyncio.wait_for(send(message), timeout=30)
+            except Exception:
+                # A failed notice must not prevent the standalone board delivery.
+                logger.exception("游戏消息发送失败")
+
+    async def _send(self, event, text=None, game=None, *, mention=None):
         chain = await self._build_chain(text, game)
+        if mention is not None:
+            chain.insert(0, At(qq=mention))
         # Await delivery inside the scope lock to preserve board order.
-        try:
-            await asyncio.wait_for(event.send(event.chain_result(chain)), timeout=30)
-        except Exception:
-            logger.exception("猜成语消息发送失败；不回滚已受理的猜词")
+        await self._deliver(chain, lambda parts: event.send(event.chain_result(parts)))
 
     async def _expire(
         self, scope: Scope, session: Session, *, now: float | None = None
@@ -97,18 +121,17 @@ class PlaygroundPlugin(Star):
         self.manager.release(scope, session)
         game = session.game if isinstance(session.game, IdiomGame) else None
         text = (
-            f"{game.display_name}游戏因 {game.idle_seconds:g} 秒没有有效猜词而结束。"
+            f"{game.idle_seconds:g} 秒未猜词，本轮结束。"
             if game is not None
             else f"{session.game.display_name}游戏超时结束。"
         )
-        chain = MessageChain(chain=await self._build_chain(text, game))
-        try:
-            await asyncio.wait_for(
-                self.context.send_message(session.origin, chain),
-                timeout=30,
-            )
-        except Exception:
-            logger.exception("游戏超时通知发送失败，游戏已释放")
+        chain = await self._build_chain(text, game)
+        await self._deliver(
+            chain,
+            lambda parts: self.context.send_message(
+                session.origin, MessageChain(chain=parts)
+            ),
+        )
         return True
 
     async def _expire_scope(self, scope, session):
@@ -148,12 +171,9 @@ class PlaygroundPlugin(Star):
             self.manager.start(scope, game, event.unified_msg_origin)
             await self._send(
                 event,
-                "猜成语开始！发送四字成语猜词，共 10 次机会。\n"
+                f"猜成语开始！共 10 次，每次有效猜词后有 {game.idle_seconds:g} 秒。\n"
                 "汉字、拼音部件和声调分别提示：绿=位置正确，黄=存在但错位，灰=无匹配。\n"
-                "声调 5 表示轻声。群内共同猜题；非成语和重复猜测不计次、不续时。"
-                f"{game.idle_seconds:g} 秒没有有效猜词会结束；"
-                "/猜成语提示 可查看已知线索，"
-                "/猜成语结束 可提前结束。",
+                "声调 5 为轻声。/猜成语提示 查看线索，/猜成语结束 结束。",
                 game,
             )
 
@@ -170,19 +190,16 @@ class PlaygroundPlugin(Star):
                 await self._send(event, "当前没有正在进行的猜成语游戏。")
                 return
             game = session.game
-            chain = [Plain("当前已知线索：")]
+            chain = []
             try:
                 png = await asyncio.to_thread(render_hint, game)
                 chain.append(Image.fromBytes(png))
             except Exception:
                 logger.exception("猜成语提示绘制失败")
-                chain.append(Plain("\n" + format_hint(game)))
-            try:
-                await asyncio.wait_for(
-                    event.send(event.chain_result(chain)), timeout=30
-                )
-            except Exception:
-                logger.exception("猜成语提示发送失败")
+                chain.append(Plain(format_hint(game)))
+            await self._deliver(
+                chain, lambda parts: event.send(event.chain_result(parts))
+            )
 
     @filter.command("猜成语结束", priority=10)
     async def stop_idiom(self, event: AstrMessageEvent):
@@ -237,15 +254,16 @@ class PlaygroundPlugin(Star):
             if game.status != "playing":
                 self.manager.release(scope, session)
             if game.status == "won":
-                message = f"恭喜猜中！共用 {len(game.guesses)} 次。"
-            elif game.status == "lost":
-                message = "10 次机会已用完。"
-            else:
-                message = (
-                    f"第 {len(game.guesses)}/10 次猜测；"
-                    f"请在 {game.idle_seconds:g} 秒内继续猜词。"
+                await self._send(
+                    event,
+                    " 恭喜猜中！",
+                    game,
+                    mention=event.get_sender_id() if event.get_group_id() else None,
                 )
-            await self._send(event, message, game)
+            elif game.status == "lost":
+                await self._send(event, "机会用完啦。", game)
+            else:
+                await self._send(event, game=game)
 
     async def terminate(self):
         tasks = list(self.expiry_workers)
