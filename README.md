@@ -48,7 +48,7 @@ python3 -m venv .venv
 ```
 
 交互 CLI 用于本地规则/图片调试，输入返回时检查空闲截止时间；机器人中的后台任务会主动结束超时游戏。
-详见 [游戏开发文档](games/idiom_wordle/DEVELOPMENT.md)。
+详见 [游戏开发文档](games/idiom_wordle/README.md)。
 
 ## 来源与许可
 
