@@ -40,6 +40,10 @@ Idiom Wordle permits ten guesses. Use only one resettable 300-second idle deadli
 
 Name tests `test_*.py`. Cover duplicate-token counts, pronunciation, terminal states, expiry boundaries, concurrency, isolation, and failure handling. Inspect generated images when changing rendering.
 
+## External Dictionary Updates
+
+Preserve upstream snapshots, commit IDs, checksums, and licenses. Merge companion pronunciation data before generating runtime dictionaries; keep local corrections in override files. Validate full source coverage and pronunciation parsing, document the generator version, and regenerate offline with `python -m games.idiom_wordle.update_dictionary`. Edit sources or overrides rather than generated `idioms.json`.
+
 ## Reusable Development Workflow
 
 1. Read repository instructions, the affected game's development document, and relevant official AstrBot documentation.
