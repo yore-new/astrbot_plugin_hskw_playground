@@ -2,36 +2,50 @@
 
 ## Project Structure & Module Organization
 
-This repository currently contains a minimal AstrBot Python plugin template.
+This repository is an AstrBot Python plugin providing chat games.
 
-- `main.py`: plugin registration, the `MyPlugin` class, lifecycle hooks, and the `/helloworld` command handler.
-- `metadata.yaml`: plugin identity, display name, description, version, author, and repository URL.
-- `README.md`: project introduction and links to AstrBot development documentation.
-- `LICENSE`: repository license.
+- `main.py`: AstrBot commands, message routing, asynchronous locks, and expiry notifications.
+- `game_manager.py`: framework-independent game registry and chat scopes.
+- `games/<game_id>/`: one self-contained directory per game, including resources, tests, and `DEVELOPMENT.md`.
+- `games/idiom_wordle/core.py`: initialization, pronunciation matching, guesses, and state transitions.
+- `games/idiom_wordle/render.py`: pure PNG generation; `__main__.py` provides local debugging.
+- `tests/`: registry and AstrBot adapter contract tests.
 
-There are currently no test, asset, or packaging directories. Keep small changes in the existing files; introduce focused modules when functionality grows.
+Keep game rules independent of AstrBot. Initialization, guessing, and rendering must each be callable and testable directly from Python.
 
-## Build, Test, and Development Commands
+## Development & Validation Commands
 
-- `python3 -m py_compile main.py`: check Python syntax without starting AstrBot. This does not validate framework imports or runtime behavior.
-- `git diff --check`: detect whitespace errors before committing.
+```sh
+python3 -m venv .venv
+.venv/bin/pip install -r requirements-dev.txt
+.venv/bin/python -m pytest -q
+.venv/bin/ruff check .
+.venv/bin/ruff format --check .
+git diff --check
+```
 
-There is no standalone build command, dependency manifest, or local runner. Install or load this repository as a plugin in an AstrBot development instance, enable it, and send `/helloworld` through a connected messaging adapter. Use the documentation linked in `README.md` for host setup.
+Use `.venv/bin/ruff format .` to format changes. Debug without AstrBot:
 
-## Coding Style & Naming Conventions
+```sh
+.venv/bin/python -m games.idiom_wordle --answer 一心一意 --guess 画蛇添足 --output /tmp/board.png
+```
 
-Use four spaces for Python indentation, `snake_case` for functions and variables, and `PascalCase` for classes. Follow the existing asynchronous AstrBot API patterns: command handlers use `@filter.command(...)` and yield event results. Keep handler docstrings descriptive because AstrBot exposes them as command documentation.
+Real message delivery requires an AstrBot host. Reload through its plugin manager and verify ordinary group messages, image uploads, and proactive expiry notifications. Distinguish host verification from tests using framework doubles.
 
-No formatter or linter is configured. Keep changes readable and avoid unrelated formatting churn. When changing plugin identity or releasing a version, review both `@register(...)` in `main.py` and `metadata.yaml`; the template currently contains placeholder values and differing versions.
+## Game Invariants & Testing
 
-## Testing Guidelines
+Scope games by platform instance and group; private chats use sender IDs. All game types share the registry, allowing one active game per scope. Serialize state changes and outgoing boards within each scope; stale callbacks must never remove replacement sessions.
 
-No automated testing framework or coverage threshold is configured. Verify changes in AstrBot: confirm the plugin loads, `/helloworld` returns the sender name and message text, and disabling or reloading the plugin produces no lifecycle errors. Inspect host logs for exceptions.
+Idiom Wordle permits ten guesses. Use only one resettable 300-second idle deadline, with no separate total-duration timer. Invalid and duplicate guesses neither consume attempts nor reset expiry. Inject monotonic timestamps in tests; use one timestamp for expiry checking and submission.
 
-If adding automated tests, place them under `tests/` with names such as `test_hello_command.py`, and document the required dependencies and invocation.
+Name tests `test_*.py`. Cover duplicate-token counts, pronunciation, terminal states, expiry boundaries, concurrency, isolation, and failure handling. Inspect generated images when changing rendering.
 
-## Commit & Pull Request Guidelines
+## Reusable Development Workflow
 
-Git history currently contains only `Initial commit`, so no established commit convention exists. Use short, imperative summaries describing the change, such as `Add greeting command validation`.
+1. Read repository instructions, the affected game's development document, and relevant official AstrBot documentation.
+2. Divide work into reviewable stages: independent rules, rendering/local debugging, then framework integration.
+3. Implement and validate each stage, update its development document, and create a focused imperative Git commit before completing the next stage.
+4. Document commands, resource licenses, behavior changes, and verification limitations. Keep runtime files outside plugin source directories.
+5. As the final development step, update this file with reusable lessons and revised workflow requirements, validate the documentation, and commit it separately.
 
-Pull requests should explain the behavior change, link relevant issues, and list validation performed. Include example command input and output for messaging changes; attach screenshots when they clarify user-visible behavior. Never commit credentials, tokens, or private message logs.
+Pull requests should describe behavior changes, linked issues, validation, and relevant sample output. Never commit credentials or private message logs.
