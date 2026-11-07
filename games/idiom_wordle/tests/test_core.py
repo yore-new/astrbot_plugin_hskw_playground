@@ -52,7 +52,7 @@ def test_pinyin_parts_tones_and_polyphones():
     assert cells[0].tone_match == "exact"
 
 
-@pytest.mark.parametrize("text", ["今天吃饭", "衣心衣意", "abcd"])
+@pytest.mark.parametrize("text", ["今天吃饭", "衣心衣意"])
 def test_non_idioms_do_not_consume_attempts_or_reset_deadline(text):
     g = game()
     assert text not in g.words
@@ -174,3 +174,15 @@ def test_random_answer_pool_must_not_be_empty_or_unknown(pool):
         IdiomGame.create(
             now=0, words={"一心一意": "yi1 xin1 yi1 yi4"}, answer_pool=pool
         )
+
+
+@pytest.mark.parametrize(
+    "text", ["abcd", "你好ab", "一心12", "你好😀啊", "一心 一", "!?！？"]
+)
+def test_same_length_non_chinese_input_is_invalid_without_changing_progress(text):
+    g = game()
+    assert len(text) == len(g.answer)
+    assert g.submit(text, now=299) == "invalid"
+    assert not g.guesses
+    assert g.deadline == 300
+    assert g.status == "playing"

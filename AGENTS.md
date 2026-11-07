@@ -37,7 +37,7 @@ Test game-specific rules alongside shared concerns: state transitions, concurren
 
 Keep content-selection filters separate from input validation so difficulty changes do not reject otherwise valid actions. When changing input validation or presentation, verify state and timing side effects alongside displayed output. Keep rendered summaries separate from recorded player actions, and check both interactive responses and background notifications. Apply presentation requirements to failure paths as well as successful responses.
 
-For messaging UI fixes, test message boundaries and component types as well as content. Keep media independently previewable when required by the platform, and use framework mention components to identify the actual participant.
+For messaging UI fixes, test message boundaries and component types as well as content. For silent input filters, assert that no reply, progress change, or activity refresh occurs. For startup changes, verify whether rendering is invoked in addition to checking outgoing messages. Keep media independently previewable when required by the platform, and use framework mention components to identify the actual participant.
 
 When adding configuration, keep schema defaults and runtime fallbacks consistent. Document units, validation, and when changes take effect. When changing units, update schema keys, runtime handling, messages, and tests together. Read-only commands must derive their output from public state without advancing progress or refreshing activity deadlines.
 

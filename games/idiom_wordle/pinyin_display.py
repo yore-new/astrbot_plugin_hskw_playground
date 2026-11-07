@@ -1,12 +1,12 @@
-"""Convert internal numbered pronunciations to standard visible tone marks."""
+"""Format pinyin with numeric tone labels and superscript text fallbacks."""
 
-from pypinyin.contrib.tone_convert import to_tone
+TONE_LABELS = {0: "5", 1: "1", 2: "2", 3: "3", 4: "4", 5: "5"}
+SUPERSCRIPT_TONES = str.maketrans("12345", "¹²³⁴⁵")
 
-TONE_MARKS = {0: "", 1: "ˉ", 2: "ˊ", 3: "ˇ", 4: "ˋ", 5: ""}
 
-
-def tone_mark(tone: int | None) -> str:
-    return "?" if tone is None else TONE_MARKS[tone]
+def display_tone(tone: int | None) -> str:
+    """Use 5 for neutral tone and a question mark for an unknown tone."""
+    return "?" if tone is None else TONE_LABELS[tone]
 
 
 def display_final(initial: str | None, final: str | None) -> str:
@@ -17,13 +17,8 @@ def display_final(initial: str | None, final: str | None) -> str:
     return final.replace("v", replacement)
 
 
-def marked_final(initial: str | None, final: str, tone: int) -> str:
-    return to_tone(display_final(initial, final) + str(tone or 5))
-
-
 def format_pinyin(initial: str | None, final: str | None, tone: int | None) -> str:
-    """Format known pronunciation; unknown components remain question marks."""
+    """Represent the raised numeric label in plain-text hint fallbacks too."""
     start = "?" if initial is None else initial
-    if final is None or tone is None:
-        return start + display_final(initial, final) + tone_mark(tone)
-    return start + marked_final(initial, final, tone)
+    label = display_tone(tone).translate(SUPERSCRIPT_TONES)
+    return start + display_final(initial, final) + label

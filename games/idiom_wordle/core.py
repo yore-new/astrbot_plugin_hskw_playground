@@ -207,7 +207,7 @@ class IdiomGame:
         if self.expire(now) or self.status != "playing":
             return "ended"
         text = text.strip()
-        if len(text) != len(self.answer):
+        if not is_candidate(text, len(self.answer)):
             return "invalid"
         if text not in self.words:
             return "not_idiom"

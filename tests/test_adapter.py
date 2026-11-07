@@ -351,7 +351,7 @@ def test_submission_uses_one_timestamp_at_deadline_boundary(adapter):
     asyncio.run(scenario())
 
 
-@pytest.mark.parametrize("text", ["今天吃饭", "abcd"])
+@pytest.mark.parametrize("text", ["今天吃饭", "衣心衣意"])
 def test_non_idiom_message_gets_feedback_without_consuming_turn(adapter, text):
     async def scenario():
         plugin = adapter.PlaygroundPlugin(Context())
@@ -472,7 +472,7 @@ def test_hint_command_summarizes_shared_history_without_resetting_timer(
         await plugin.hint_idiom(hint)
         assert hint.stopped
         assert hint.sent[0][-1] == ("image", b"HINT")
-        assert "画  huà" in snapshots[0]
+        assert "画  hua⁴" in snapshots[0]
         assert snapshots[0] == snapshots[1]
         assert session.game.deadline == 301
         assert len(session.game.guesses) == 1
@@ -558,7 +558,7 @@ def test_configured_timeout_controls_deadlines_messages_and_new_games(adapter):
         assert not plugin.manager.sessions
         await plugin.start_idiom(start)
         assert plugin.manager.get(scope).game.deadline == 359
-        assert "60 秒" in start.sent[-2][0].text
+        assert "60 秒" in start.sent[-1][0].text
         await plugin.terminate()
 
     asyncio.run(scenario())
@@ -777,6 +777,67 @@ def test_astrbot_start_passes_common_answers_to_game_creation(adapter, monkeypat
         assert len(plugin.answers) == 1415
         assert "一丁不识" not in plugin.answers
         assert plugin.manager.get(plugin._scope(start)).game.answer == "一心一意"
+        await plugin.terminate()
+
+    asyncio.run(scenario())
+
+
+def test_start_sends_only_instructions_without_rendering_an_empty_board(
+    adapter, monkeypatch
+):
+    async def scenario():
+        plugin = adapter.PlaygroundPlugin(Context())
+        plugin.clock = lambda: 0
+
+        renders = []
+
+        def record_render(game):
+            renders.append(game)
+            return b"PNG"
+
+        monkeypatch.setattr(adapter, "render_board", record_render)
+        start = Event()
+        await plugin.start_idiom(start)
+        assert len(start.sent) == 1
+        assert all(isinstance(c, Plain) for c in start.sent[0])
+        assert "猜成语开始" in start.sent[0][0].text
+        assert not renders
+        assert "5 为轻声" in start.sent[0][0].text
+        session = plugin.manager.get(plugin._scope(start))
+        assert not session.game.guesses
+        assert session.game.deadline == 300
+        # Explicit hint requests are still answered even before the first guess.
+        hint = Event()
+        await plugin.hint_idiom(hint)
+        assert hint.sent == [[Image(b"HINT")]]
+        assert session.game.deadline == 300
+        await plugin.terminate()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize(
+    "text", ["abcd", "你好ab", "一心12", "你好😀啊", "一心 一", "!?！？"]
+)
+def test_same_length_non_chinese_input_is_silently_ignored(adapter, text):
+    async def scenario():
+        plugin = adapter.PlaygroundPlugin(Context())
+        now = [0]
+        plugin.clock = lambda: now[0]
+        start = Event()
+        await plugin.start_idiom(start)
+        session = plugin.manager.get(plugin._scope(start))
+        assert len(text) == len(session.game.answer)
+        now[0] = 299
+        message = Event(text)
+        await plugin.on_guess(message)
+        assert not message.sent
+        assert not message.stopped
+        assert not session.game.guesses
+        assert session.game.deadline == 300
+        now[0] = 300
+        await plugin._expire_scope(plugin._scope(start), session)
+        assert session.game.status == "timeout"
         await plugin.terminate()
 
     asyncio.run(scenario())

@@ -57,6 +57,6 @@ def test_known_empty_initial_and_neutral_tone_are_not_question_marks():
     g.submit("阿猫阿狗", now=1)
     hint = get_hint(g)
     assert hint[0].initial == ""
-    assert hint[0].pinyin_parts == ("", "a", "ˉ")
+    assert hint[0].pinyin_parts == ("", "a", "1")
     assert hint[1].tone == 0
-    assert hint[1].pinyin_parts == ("m", "ao", "")
+    assert hint[1].pinyin_parts == ("m", "ao", "5")

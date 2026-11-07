@@ -3,7 +3,7 @@
 from dataclasses import dataclass, replace
 
 from .core import IdiomGame
-from .pinyin_display import display_final, format_pinyin, tone_mark
+from .pinyin_display import display_final, display_tone, format_pinyin
 
 
 @dataclass(frozen=True)
@@ -18,7 +18,7 @@ class HintCell:
         return (
             "?" if self.initial is None else self.initial,
             display_final(self.initial, self.final),
-            tone_mark(self.tone),
+            display_tone(self.tone),
         )
 
 

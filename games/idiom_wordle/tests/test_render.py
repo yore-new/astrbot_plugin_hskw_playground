@@ -42,8 +42,10 @@ def test_board_contains_only_characters_and_pinyin(drawn_text):
     game.submit("画蛇添足", now=1)
     render_board(game)
     assert [text for _, text, _ in drawn_text if text in "画蛇添足"] == list("画蛇添足")
-    assert {"à", "é", "ā", "ú"} <= {text for _, text, _ in drawn_text}
-    assert not any(char.isdigit() for _, text, _ in drawn_text for char in text)
+    assert [text for _, text, _ in drawn_text if text.isdigit()] == ["4", "2", "1", "2"]
+    assert {"h", "ua", "sh", "e", "t", "ian", "z", "u"} <= {
+        text for _, text, _ in drawn_text
+    }
     assert not any(text in "一心意" for _, text, _ in drawn_text)
 
 
@@ -107,42 +109,57 @@ def test_hint_draws_confirmed_clues_and_masks_the_rest(drawn_text):
     game.submit("画龙点睛", now=1)
     before = (list(game.guesses), game.deadline, game.status)
     render_hint(game)
-    assert ("à", COLORS["exact"]) in [call[1:] for call in drawn_text]
+    assert ("4", COLORS["exact"]) in [call[1:] for call in drawn_text]
     assert ("画", COLORS["exact"]) in [call[1:] for call in drawn_text]
     assert ("?", COLORS["none"]) in [call[1:] for call in drawn_text]
     assert "蛇" not in [text for _, text, _ in drawn_text]
     assert (game.guesses, game.deadline, game.status) == before
 
 
-def test_tone_mark_keeps_its_match_color_independent_of_the_vowel(drawn_text):
+def test_superscript_tone_keeps_its_match_color_independent_of_the_vowel(drawn_text):
     game = IdiomGame.create(now=0, answer="一心一意")
     game.submit("画蛇添足", now=1)
     render_board(game)
-    accent = next(call for call in drawn_text if call[1] == "à")
-    assert accent[2] == COLORS["misplaced"]
-    assert (accent[0], "a", COLORS["none"]) in drawn_text
+    number = next(call for call in drawn_text if call[1] == "4")
+    vowel = next(call for call in drawn_text if call[1] == "ua")
+    assert number[2] == COLORS["misplaced"]
+    assert vowel[2] == COLORS["none"]
+    assert number[0][0] > vowel[0][0]
+    assert number[0][1] < vowel[0][1]
 
 
-def test_third_tone_i_is_not_overlaid_with_a_dot(drawn_text):
+@pytest.mark.parametrize(
+    "tone,label", [(1, "1"), (2, "2"), (3, "3"), (4, "4"), (5, "5"), (0, "5")]
+)
+def test_all_tones_are_drawn_as_raised_digits(drawn_text, tone, label):
     game = IdiomGame.create(
-        now=0, answer="鬼使神差", words={"鬼使神差": "gui3 shi3 shen2 chai1"}
+        now=0,
+        answer="一心一意",
+        words={"一心一意": f"yi{tone} xin{tone} yi{tone} yi{tone}"},
     )
     game.submit(game.answer, now=1)
     render_board(game)
-    marked = next(call for call in drawn_text if call[1] == "ǐ")
-    assert not any(call[1] == "ı" for call in drawn_text)
-    assert not any(call[0] == marked[0] and call[1] == "i" for call in drawn_text)
+    digits = [call for call in drawn_text if call[1].isdigit()]
+    assert [call[1] for call in digits] == [label] * 4
+    for number in digits:
+        letters = [
+            call
+            for call in drawn_text
+            if call[0][0] < number[0][0] and call[1] in {"i", "in"}
+        ]
+        assert number[0][1] < letters[-1][0][1]
+    assert not any(call[1] in {"ǐ", "ī", "ı"} for call in drawn_text)
 
 
 @pytest.mark.parametrize("view", ["board", "hint", "answer"])
-def test_all_views_use_pale_yellow_background_and_cells(view):
+def test_all_views_use_pale_yellow_background_and_light_gray_cells(view):
     game = IdiomGame.create(now=0, answer="一心一意")
     if view == "answer":
         game.stop()
     png = render_hint(game) if view == "hint" else render_board(game)
     image = Image.open(BytesIO(png))
     assert image.getpixel((0, 0)) == (255, 248, 214)
-    assert image.getpixel((20, 76)) == (255, 251, 237)
+    assert image.getpixel((20, 76)) == (238, 238, 238)
 
 
 def test_feedback_colors_remain_readable_on_warm_backgrounds():

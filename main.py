@@ -11,7 +11,13 @@ from astrbot.api.message_components import At, Image, Plain
 from astrbot.api.star import Context, Star
 
 from .game_manager import GameManager, Scope, Session
-from .games.idiom_wordle.core import IDLE_SECONDS, IdiomGame, load_answers, load_words
+from .games.idiom_wordle.core import (
+    IDLE_SECONDS,
+    IdiomGame,
+    is_candidate,
+    load_answers,
+    load_words,
+)
 from .games.idiom_wordle.hints import format_hint
 from .games.idiom_wordle.render import render_board, render_hint
 
@@ -180,8 +186,8 @@ class PlaygroundPlugin(Star):
                 event,
                 f"猜成语开始！共 10 次，每次有效猜词后有 {game.idle_seconds:g} 秒。\n"
                 "汉字、拼音部件和声调分别提示：绿=位置正确，黄=存在但错位，灰=无匹配。\n"
-                "轻声不标调。/猜成语提示 查看线索，/猜成语结束 结束。",
-                game,
+                "右上角 1–5 表示声调，5 为轻声。"
+                "/猜成语提示 查看线索，/猜成语结束 结束。",
             )
 
     @filter.command("猜成语提示", priority=10)
@@ -227,10 +233,8 @@ class PlaygroundPlugin(Star):
     @filter.event_message_type(filter.EventMessageType.ALL, priority=0)
     async def on_guess(self, event: AstrMessageEvent):
         text = event.message_str.strip()
-        if (
-            len(text) != 4
-            or text.startswith("/")
-            or any(not isinstance(c, Plain) for c in event.get_messages())
+        if not is_candidate(text) or any(
+            not isinstance(c, Plain) for c in event.get_messages()
         ):
             return
         scope = self._scope(event)
