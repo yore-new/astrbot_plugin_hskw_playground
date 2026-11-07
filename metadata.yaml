@@ -1,6 +1,6 @@
 name: astrbot_plugin_hskw_playground
-display_name: 群聊小游戏
-desc: 按聊天隔离的小游戏，目前支持带汉字、拼音和声调提示的猜成语 Wordle。
+display_name: 星川游乐场
+desc: 按聊天隔离的小游戏，目前支持猜成语。
 version: v0.1.0
 author: yore
 repo: https://github.com/yore-new/astrbot_plugin_hskw_playground
