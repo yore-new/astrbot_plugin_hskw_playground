@@ -3,6 +3,7 @@
 from dataclasses import dataclass, replace
 
 from .core import IdiomGame
+from .pinyin_display import display_final, format_pinyin, tone_mark
 
 
 @dataclass(frozen=True)
@@ -16,8 +17,8 @@ class HintCell:
     def pinyin_parts(self) -> tuple[str, str, str]:
         return (
             "?" if self.initial is None else self.initial,
-            "?" if self.final is None else self.final.replace("v", "ü"),
-            "?" if self.tone is None else str(self.tone or 5),
+            display_final(self.initial, self.final),
+            tone_mark(self.tone),
         )
 
 
@@ -53,5 +54,6 @@ def format_hint(game: IdiomGame) -> str:
     """Plain-text equivalent of the one-row hint image, also usable as a fallback."""
     cells = get_hint(game)
     return "\n".join(
-        f"{cell.char or '?'}  {' '.join(cell.pinyin_parts)}" for cell in cells
+        f"{cell.char or '?'}  {format_pinyin(cell.initial, cell.final, cell.tone)}"
+        for cell in cells
     )

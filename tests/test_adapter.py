@@ -472,7 +472,7 @@ def test_hint_command_summarizes_shared_history_without_resetting_timer(
         await plugin.hint_idiom(hint)
         assert hint.stopped
         assert hint.sent[0][-1] == ("image", b"HINT")
-        assert "画  h ua 4" in snapshots[0]
+        assert "画  huà" in snapshots[0]
         assert snapshots[0] == snapshots[1]
         assert session.game.deadline == 301
         assert len(session.game.guesses) == 1
@@ -519,7 +519,7 @@ def test_hint_rendering_failure_returns_only_known_information(adapter, monkeypa
 
         monkeypatch.setattr(adapter, "render_hint", broken)
         await plugin.hint_idiom(hint)
-        assert hint.sent[-1][0].text == "\n".join(["?  ? ? ?"] * 4)
+        assert hint.sent[-1][0].text == "\n".join(["?  ???"] * 4)
         assert session.game.answer not in hint.sent[-1][0].text
         assert session.game.deadline == 300
         assert not session.game.guesses

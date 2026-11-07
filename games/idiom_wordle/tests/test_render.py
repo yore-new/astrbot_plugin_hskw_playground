@@ -13,7 +13,8 @@ def drawn_text(monkeypatch):
     original = ImageDraw.ImageDraw.text
 
     def capture(self, xy, text, *args, **kwargs):
-        calls.append((xy, text, kwargs.get("fill")))
+        if self._image.mode == "RGB":
+            calls.append((xy, text, kwargs.get("fill")))
         return original(self, xy, text, *args, **kwargs)
 
     monkeypatch.setattr(ImageDraw.ImageDraw, "text", capture)
@@ -41,27 +42,8 @@ def test_board_contains_only_characters_and_pinyin(drawn_text):
     game.submit("画蛇添足", now=1)
     render_board(game)
     assert [text for _, text, _ in drawn_text if text in "画蛇添足"] == list("画蛇添足")
-    assert all(
-        text
-        in {
-            "画",
-            "蛇",
-            "添",
-            "足",
-            "h",
-            "ua",
-            "4",
-            "sh",
-            "e",
-            "2",
-            "t",
-            "ian",
-            "1",
-            "z",
-            "u",
-        }
-        for _, text, _ in drawn_text
-    )
+    assert {"à", "é", "ā", "ú"} <= {text for _, text, _ in drawn_text}
+    assert not any(char.isdigit() for _, text, _ in drawn_text for char in text)
     assert not any(text in "一心意" for _, text, _ in drawn_text)
 
 
@@ -77,14 +59,20 @@ def test_unsuccessful_ending_appends_green_answer_without_mutation(ending, drawn
         game.expire(game.deadline)
     before = list(game.guesses)
     render_board(game)
-    answer_row = drawn_text[-16:]
+    answer_top = 16 + len(game.guesses) * 132
+    answer_row = [call for call in drawn_text if call[0][1] >= answer_top]
     assert [text for _, text, _ in answer_row if text in "一心意"] == list(game.answer)
     assert all(color == COLORS["exact"] for _, _, color in answer_row)
     assert game.guesses == before
     assert game.status == ending
     # Same columns and spacing as previous guesses, directly below the last row.
-    previous_y = drawn_text[-17][0][1]
-    answer_char_y = answer_row[3][0][1]
+    hanzi = [
+        call
+        for call in drawn_text
+        if len(call[1]) == 1 and "\u4e00" <= call[1] <= "\u9fff"
+    ]
+    previous_y = hanzi[-5][0][1]
+    answer_char_y = hanzi[-4][0][1]
     assert answer_char_y - previous_y == 132
 
 
@@ -119,8 +107,28 @@ def test_hint_draws_confirmed_clues_and_masks_the_rest(drawn_text):
     game.submit("画龙点睛", now=1)
     before = (list(game.guesses), game.deadline, game.status)
     render_hint(game)
-    assert [text for _, text, _ in drawn_text[:4]] == ["h", "ua", "4", "画"]
-    assert all(color == COLORS["exact"] for _, _, color in drawn_text[:4])
-    assert drawn_text[7][1:] == ("?", COLORS["none"])
+    assert ("à", COLORS["exact"]) in [call[1:] for call in drawn_text]
+    assert ("画", COLORS["exact"]) in [call[1:] for call in drawn_text]
+    assert ("?", COLORS["none"]) in [call[1:] for call in drawn_text]
     assert "蛇" not in [text for _, text, _ in drawn_text]
     assert (game.guesses, game.deadline, game.status) == before
+
+
+def test_tone_mark_keeps_its_match_color_independent_of_the_vowel(drawn_text):
+    game = IdiomGame.create(now=0, answer="一心一意")
+    game.submit("画蛇添足", now=1)
+    render_board(game)
+    accent = next(call for call in drawn_text if call[1] == "à")
+    assert accent[2] == COLORS["misplaced"]
+    assert (accent[0], "a", COLORS["none"]) in drawn_text
+
+
+def test_third_tone_i_is_not_overlaid_with_a_dot(drawn_text):
+    game = IdiomGame.create(
+        now=0, answer="鬼使神差", words={"鬼使神差": "gui3 shi3 shen2 chai1"}
+    )
+    game.submit(game.answer, now=1)
+    render_board(game)
+    marked = next(call for call in drawn_text if call[1] == "ǐ")
+    assert not any(call[1] == "ı" for call in drawn_text)
+    assert not any(call[0] == marked[0] and call[1] == "i" for call in drawn_text)

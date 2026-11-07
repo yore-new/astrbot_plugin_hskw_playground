@@ -33,7 +33,7 @@ Use four-space indentation, `snake_case` functions and variables, and `PascalCas
 
 Scope games by platform instance and group; private chats use sender IDs. All game types share the registry, allowing one active game per scope. Serialize state changes and responses within each scope; stale callbacks must never remove replacement sessions.
 
-Test game-specific rules alongside shared concerns: state transitions, concurrency, isolation, and failure handling. Inject clocks for time-dependent behavior rather than waiting in tests. Inspect generated images when changing rendering. Keep runtime files outside plugin source directories and retain licenses for external resources.
+Test game-specific rules alongside shared concerns: state transitions, concurrency, isolation, and failure handling. Inject clocks for time-dependent behavior rather than waiting in tests. Inspect generated images when changing rendering. Verify bundled font coverage for combining marks and alternate glyphs; passing layout tests alone does not establish visual correctness. Keep runtime files outside plugin source directories and retain licenses for external resources.
 
 When changing input validation or presentation, verify state and timing side effects alongside displayed output. Keep rendered summaries separate from recorded player actions, and check both interactive responses and background notifications. Apply presentation requirements to failure paths as well as successful responses.
 
