@@ -47,11 +47,24 @@ def test_pinyin_parts_tones_and_polyphones():
     assert split_pinyin("ma5").tone == 0
     assert evaluate("重见天日", "重见天日", words)[0].syllable.initial == "ch"
     # Different characters can share pronunciation without winning.
+    cells = evaluate("衣心衣意", "一心一意", words)
+    assert cells[0].char_match == "none"
+    assert cells[0].tone_match == "exact"
+
+
+@pytest.mark.parametrize("text", ["今天吃饭", "衣心衣意", "abcd"])
+def test_non_idioms_do_not_consume_attempts_or_reset_deadline(text):
     g = game()
-    assert g.submit("衣心衣意", now=10) == "accepted"
+    assert text not in g.words
+    assert g.submit(text, now=100) == "not_idiom"
+    assert not g.guesses
+    assert g.deadline == 300
     assert g.status == "playing"
-    assert g.guesses[0].cells[0].char_match == "none"
-    assert g.guesses[0].cells[0].tone_match == "exact"
+    assert g.submit("画蛇添足", now=200) == "accepted"
+    assert g.submit(text, now=499) == "not_idiom"
+    assert len(g.guesses) == 1
+    assert g.deadline == 500
+    assert g.expire(500)
 
 
 def test_only_valid_new_guesses_reset_idle_deadline():
@@ -111,3 +124,24 @@ def test_idle_interval_has_no_second_total_deadline(monkeypatch):
         assert g.submit(word, now=(i + 1) * 299) == "accepted"
     assert g.status == "playing"
     assert g.deadline > 3600
+
+
+def test_custom_idle_timeout_applies_to_start_valid_guess_and_expiry():
+    g = IdiomGame.create(now=10, answer="一心一意", idle_seconds=120)
+    assert g.deadline == 130
+    assert g.submit("今天吃饭", now=100) == "not_idiom"
+    assert g.deadline == 130
+    assert g.submit("画蛇添足", now=129) == "accepted"
+    assert g.deadline == 249
+    assert g.submit("画蛇添足", now=200) == "duplicate"
+    assert g.deadline == 249
+    assert not g.expire(248.99)
+    assert g.expire(249)
+
+
+@pytest.mark.parametrize(
+    "timeout", [0, -1, float("inf"), float("nan"), True, None, "bad"]
+)
+def test_invalid_idle_timeout_is_rejected(timeout):
+    with pytest.raises(ValueError, match="finite and positive"):
+        IdiomGame.create(now=0, answer="一心一意", idle_seconds=timeout)

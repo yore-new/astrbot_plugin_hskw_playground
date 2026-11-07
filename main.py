@@ -1,22 +1,25 @@
 """AstrBot adapter. Rules, rendering and registry remain locally testable."""
 
 import asyncio
+import math
 import time
 from collections import defaultdict
 
-from astrbot.api import logger
+from astrbot.api import AstrBotConfig, logger
 from astrbot.api.event import AstrMessageEvent, MessageChain, filter
 from astrbot.api.message_components import Image, Plain
 from astrbot.api.star import Context, Star
 
 from .game_manager import GameManager, Scope, Session
-from .games.idiom_wordle.core import IdiomGame, is_candidate, load_words
-from .games.idiom_wordle.render import render_board
+from .games.idiom_wordle.core import IDLE_SECONDS, IdiomGame, load_words
+from .games.idiom_wordle.hints import format_hint
+from .games.idiom_wordle.render import render_board, render_hint
 
 
 class PlaygroundPlugin(Star):
-    def __init__(self, context: Context):
+    def __init__(self, context: Context, config: AstrBotConfig | None = None):
         super().__init__(context)
+        self.config = config if config is not None else {}
         self.manager = GameManager()
         self.locks = defaultdict(asyncio.Lock)
         self.words = load_words()
@@ -40,7 +43,21 @@ class PlaygroundPlugin(Star):
             str(group or event.get_sender_id()),
         )
 
-    async def _send(self, event, text, game=None):
+    def _idle_seconds(self) -> float:
+        """Read the configured interval when a new game starts."""
+        value = self.config.get("idiom_idle_timeout_seconds", IDLE_SECONDS)
+        try:
+            if isinstance(value, bool):
+                raise ValueError("Boolean timeout is invalid")
+            seconds = float(value)
+            if not math.isfinite(seconds) or seconds <= 0:
+                raise ValueError("Timeout must be finite and positive")
+        except (TypeError, ValueError, OverflowError):
+            logger.warning("猜成语超时配置无效，使用默认 300 秒")
+            return IDLE_SECONDS
+        return seconds
+
+    async def _build_chain(self, text, game=None):
         chain = [Plain(text)]
         if game is not None:
             try:
@@ -48,6 +65,9 @@ class PlaygroundPlugin(Star):
                 chain.append(Image.fromBytes(png))
             except Exception:
                 logger.exception("猜成语棋盘绘制失败")
+                if game.status != "playing":
+                    chain.append(Plain("答案图片生成失败，本轮已结束。"))
+                    return chain
                 chain.append(Plain("棋盘绘制失败，进度已保留。"))
                 for guess in game.guesses:
                     marks = {"exact": "🟩", "misplaced": "🟨", "none": "⬜"}
@@ -59,6 +79,10 @@ class PlaygroundPlugin(Star):
                             + "".join(marks[c.char_match] for c in guess.cells)
                         )
                     )
+        return chain
+
+    async def _send(self, event, text, game=None):
+        chain = await self._build_chain(text, game)
         # Await delivery inside the scope lock to preserve board order.
         try:
             await asyncio.wait_for(event.send(event.chain_result(chain)), timeout=30)
@@ -71,12 +95,16 @@ class PlaygroundPlugin(Star):
         if not session.game.expire(self.clock() if now is None else now):
             return False
         self.manager.release(scope, session)
-        text = f"{session.game.display_name}游戏因 5 分钟没有有效猜词而结束。"
-        if isinstance(session.game, IdiomGame):
-            text += f"答案：{session.game.answer}"
+        game = session.game if isinstance(session.game, IdiomGame) else None
+        text = (
+            f"{game.display_name}游戏因 {game.idle_seconds:g} 秒没有有效猜词而结束。"
+            if game is not None
+            else f"{session.game.display_name}游戏超时结束。"
+        )
+        chain = MessageChain(chain=await self._build_chain(text, game))
         try:
             await asyncio.wait_for(
-                self.context.send_message(session.origin, MessageChain().message(text)),
+                self.context.send_message(session.origin, chain),
                 timeout=30,
             )
         except Exception:
@@ -114,16 +142,47 @@ class PlaygroundPlugin(Star):
                     f"「{session.game.display_name}」游戏正在进行中，不可以开始新的游戏哦。",
                 )
                 return
-            game = IdiomGame.create(now=self.clock(), words=self.words)
+            game = IdiomGame.create(
+                now=self.clock(), words=self.words, idle_seconds=self._idle_seconds()
+            )
             self.manager.start(scope, game, event.unified_msg_origin)
             await self._send(
                 event,
-                "猜成语开始！发送四字汉字猜词，共 10 次机会。\n"
+                "猜成语开始！发送四字成语猜词，共 10 次机会。\n"
                 "汉字、拼音部件和声调分别提示：绿=位置正确，黄=存在但错位，灰=无匹配。\n"
-                "群内共同猜题；重复猜测不计次、不续时。"
-                "5 分钟没有有效猜词会结束；发送 /猜成语结束 可提前结束。",
+                "声调 5 表示轻声。群内共同猜题；非成语和重复猜测不计次、不续时。"
+                f"{game.idle_seconds:g} 秒没有有效猜词会结束；"
+                "/猜成语提示 可查看已知线索，"
+                "/猜成语结束 可提前结束。",
                 game,
             )
+
+    @filter.command("猜成语提示", priority=10)
+    async def hint_idiom(self, event: AstrMessageEvent):
+        """汇总已知的正确汉字和拼音，不消耗次数或重置计时。"""
+        event.stop_event()
+        scope = self._scope(event)
+        async with self.locks[scope]:
+            session = self.manager.get(scope)
+            if session and await self._expire(scope, session):
+                return
+            if not session or session.game.game_id != "idiom_wordle":
+                await self._send(event, "当前没有正在进行的猜成语游戏。")
+                return
+            game = session.game
+            chain = [Plain("当前已知线索：")]
+            try:
+                png = await asyncio.to_thread(render_hint, game)
+                chain.append(Image.fromBytes(png))
+            except Exception:
+                logger.exception("猜成语提示绘制失败")
+                chain.append(Plain("\n" + format_hint(game)))
+            try:
+                await asyncio.wait_for(
+                    event.send(event.chain_result(chain)), timeout=30
+                )
+            except Exception:
+                logger.exception("猜成语提示发送失败")
 
     @filter.command("猜成语结束", priority=10)
     async def stop_idiom(self, event: AstrMessageEvent):
@@ -139,15 +198,15 @@ class PlaygroundPlugin(Star):
                 return
             session.game.stop()
             self.manager.release(scope, session)
-            await self._send(
-                event, f"本轮已结束。答案：{session.game.answer}", session.game
-            )
+            await self._send(event, "本轮已结束。", session.game)
 
     @filter.event_message_type(filter.EventMessageType.ALL, priority=0)
     async def on_guess(self, event: AstrMessageEvent):
         text = event.message_str.strip()
-        if not is_candidate(text) or any(
-            not isinstance(c, Plain) for c in event.get_messages()
+        if (
+            len(text) != 4
+            or text.startswith("/")
+            or any(not isinstance(c, Plain) for c in event.get_messages())
         ):
             return
         scope = self._scope(event)
@@ -164,6 +223,9 @@ class PlaygroundPlugin(Star):
                 return
             game = session.game
             result = game.submit(text, now=now)
+            if result == "not_idiom":
+                await self._send(event, f"{text} 不是成语呢~")
+                return
             if result == "duplicate":
                 await self._send(
                     event, "这个猜测已经提交过啦，不消耗次数，也不会重新计时。"
@@ -175,11 +237,14 @@ class PlaygroundPlugin(Star):
             if game.status != "playing":
                 self.manager.release(scope, session)
             if game.status == "won":
-                message = f"恭喜猜中！共用 {len(game.guesses)} 次。答案：{game.answer}"
+                message = f"恭喜猜中！共用 {len(game.guesses)} 次。"
             elif game.status == "lost":
-                message = f"10 次机会已用完。答案：{game.answer}"
+                message = "10 次机会已用完。"
             else:
-                message = f"第 {len(game.guesses)}/10 次猜测；请在 5 分钟内继续猜词。"
+                message = (
+                    f"第 {len(game.guesses)}/10 次猜测；"
+                    f"请在 {game.idle_seconds:g} 秒内继续猜词。"
+                )
             await self._send(event, message, game)
 
     async def terminate(self):

@@ -23,8 +23,15 @@ class Image:
 
 
 class MessageChain:
+    def __init__(self, chain=None):
+        self.chain = [] if chain is None else chain
+
+    @property
+    def text(self):
+        return "".join(c.text for c in self.chain if isinstance(c, Plain))
+
     def message(self, text):
-        self.text = text
+        self.chain.append(Plain(text))
         return self
 
 
@@ -62,12 +69,14 @@ class Event:
 class Context:
     def __init__(self):
         self.sent = []
+        self.chains = []
         self.fail = False
 
     async def send_message(self, origin, chain):
         if self.fail:
             raise RuntimeError("Delivery unavailable")
         self.sent.append((origin, chain.text))
+        self.chains.append(chain.chain)
 
 
 @pytest.fixture
@@ -81,7 +90,10 @@ def adapter(monkeypatch):
 
     modules = {
         "astrbot": {},
-        "astrbot.api": {"logger": logging.getLogger("adapter-test")},
+        "astrbot.api": {
+            "logger": logging.getLogger("adapter-test"),
+            "AstrBotConfig": dict,
+        },
         "astrbot.api.event": {
             "AstrMessageEvent": Event,
             "MessageChain": MessageChain,
@@ -105,6 +117,7 @@ def adapter(monkeypatch):
     module = importlib.import_module(f"{package_name}.main")
     # Real render_board is separately tested; adapter tests inspect orchestration.
     monkeypatch.setattr(module, "render_board", lambda game: b"PNG")
+    monkeypatch.setattr(module, "render_hint", lambda game: b"HINT")
     yield module
     for name in list(sys.modules):
         if name.startswith(package_name):
@@ -159,7 +172,7 @@ def test_timer_reset_invalid_duplicate_and_passive_expiry(adapter):
         assert plugin.manager.get(scope) is None
         assert session.game.status == "timeout"
         assert context.sent[0][0] == a.unified_msg_origin
-        assert session.game.answer in context.sent[0][1]
+        assert context.chains[0][-1] == ("image", b"PNG")
         # A stale expiry callback must leave the new game untouched.
         await plugin.start_idiom(a)
         await plugin._expire_scope(scope, session)
@@ -321,6 +334,294 @@ def test_submission_uses_one_timestamp_at_deadline_boundary(adapter):
         assert len(game.guesses) == 1
         assert game.status == "playing"
         assert game.deadline == 599.999
+        await plugin.terminate()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("text", ["今天吃饭", "abcd"])
+def test_non_idiom_message_gets_feedback_without_consuming_turn(adapter, text):
+    async def scenario():
+        plugin = adapter.PlaygroundPlugin(Context())
+        now = [0]
+        plugin.clock = lambda: now[0]
+        start = Event()
+        await plugin.start_idiom(start)
+        session = plugin.manager.get(plugin._scope(start))
+        now[0] = 299
+        guess = Event(text)
+        await plugin.on_guess(guess)
+        assert guess.stopped
+        assert guess.sent[0][0].text == f"{text} 不是成语呢~"
+        assert len(guess.sent[0]) == 1
+        assert not session.game.guesses
+        assert session.game.deadline == 300
+        now[0] = 300
+        await plugin._expire_scope(plugin._scope(start), session)
+        assert session.game.status == "timeout"
+        assert not plugin.manager.sessions
+        await plugin.terminate()
+
+    asyncio.run(scenario())
+
+
+def test_same_length_command_is_not_a_guess(adapter):
+    async def scenario():
+        plugin = adapter.PlaygroundPlugin(Context())
+        start = Event()
+        await plugin.start_idiom(start)
+        command = Event("/abc")
+        await plugin.on_guess(command)
+        assert not command.stopped
+        assert not command.sent
+        await plugin.terminate()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("ending", ["timeout", "stopped"])
+def test_ended_game_never_reveals_answer_in_text_when_rendering_fails(
+    adapter, monkeypatch, ending
+):
+    async def scenario():
+        context = Context()
+        plugin = adapter.PlaygroundPlugin(context)
+        now = [0]
+        plugin.clock = lambda: now[0]
+        start = Event()
+        await plugin.start_idiom(start)
+        scope = plugin._scope(start)
+        session = plugin.manager.get(scope)
+
+        def broken(game):
+            raise RuntimeError("Font unavailable")
+
+        monkeypatch.setattr(adapter, "render_board", broken)
+        if ending == "timeout":
+            now[0] = 300
+            await plugin._expire_scope(scope, session)
+            chain = context.chains[0]
+        else:
+            await plugin.stop_idiom(start)
+            chain = start.sent[-1]
+        assert not plugin.manager.sessions
+        assert all(isinstance(c, Plain) for c in chain)
+        assert session.game.answer not in "".join(c.text for c in chain)
+        assert "答案图片生成失败" in "".join(c.text for c in chain)
+        await plugin.terminate()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("text", ["你好", "今天天气真好", "abc", ""])
+def test_wrong_length_message_is_silently_ignored(adapter, text):
+    async def scenario():
+        plugin = adapter.PlaygroundPlugin(Context())
+        plugin.clock = lambda: 0
+        start = Event()
+        await plugin.start_idiom(start)
+        session = plugin.manager.get(plugin._scope(start))
+        message = Event(text)
+        await plugin.on_guess(message)
+        assert not message.sent
+        assert not message.stopped
+        assert session.game.deadline == 300
+        assert not session.game.guesses
+        await plugin.terminate()
+
+    asyncio.run(scenario())
+
+
+def test_hint_command_summarizes_shared_history_without_resetting_timer(
+    adapter, monkeypatch
+):
+    async def scenario():
+        plugin = adapter.PlaygroundPlugin(Context())
+        now = [0]
+        plugin.clock = lambda: now[0]
+        start = Event()
+        await plugin.start_idiom(start)
+        session = plugin.manager.get(plugin._scope(start))
+        session.game = adapter.IdiomGame.create(
+            now=0, words=plugin.words, answer="画蛇添足"
+        )
+        now[0] = 1
+        await plugin.on_guess(Event("画龙点睛"))
+        snapshots = []
+
+        def render(game):
+            snapshots.append(adapter.format_hint(game))
+            return b"HINT"
+
+        monkeypatch.setattr(adapter, "render_hint", render)
+        now[0] = 299
+        hint = Event(sender="another-player")
+        await plugin.hint_idiom(hint)
+        await plugin.hint_idiom(hint)
+        assert hint.stopped
+        assert hint.sent[0][-1] == ("image", b"HINT")
+        assert "画  h ua 4" in snapshots[0]
+        assert snapshots[0] == snapshots[1]
+        assert session.game.deadline == 301
+        assert len(session.game.guesses) == 1
+        now[0] = 301
+        await plugin.hint_idiom(hint)
+        assert not plugin.manager.sessions
+        assert session.game.status == "timeout"
+        assert len(hint.sent) == 2  # Expired requests send the normal timeout result.
+        await plugin.terminate()
+
+    asyncio.run(scenario())
+
+
+def test_hint_without_current_game_and_in_other_scope(adapter):
+    async def scenario():
+        plugin = adapter.PlaygroundPlugin(Context())
+        hint = Event()
+        await plugin.hint_idiom(hint)
+        assert hint.sent[0][0].text == "当前没有正在进行的猜成语游戏。"
+        await plugin.start_idiom(Event(group="other-group"))
+        await plugin.hint_idiom(hint)
+        assert hint.sent[-1][0].text == "当前没有正在进行的猜成语游戏。"
+        await plugin.start_idiom(Event())
+        session = plugin.manager.get(plugin._scope(hint))
+        session.game.game_id = "another-game"
+        await plugin.hint_idiom(hint)
+        assert hint.sent[-1][0].text == "当前没有正在进行的猜成语游戏。"
+        assert session.game.status == "playing"
+        await plugin.terminate()
+
+    asyncio.run(scenario())
+
+
+def test_hint_rendering_failure_returns_only_known_information(adapter, monkeypatch):
+    async def scenario():
+        plugin = adapter.PlaygroundPlugin(Context())
+        plugin.clock = lambda: 0
+        hint = Event()
+        await plugin.start_idiom(hint)
+        session = plugin.manager.get(plugin._scope(hint))
+
+        def broken(game):
+            raise RuntimeError("Font unavailable")
+
+        monkeypatch.setattr(adapter, "render_hint", broken)
+        await plugin.hint_idiom(hint)
+        assert hint.sent[-1][1].text == "\n" + "\n".join(["?  ? ? ?"] * 4)
+        assert session.game.answer not in hint.sent[-1][1].text
+        assert session.game.deadline == 300
+        assert not session.game.guesses
+        await plugin.terminate()
+
+    asyncio.run(scenario())
+
+
+def test_configured_timeout_controls_deadlines_messages_and_new_games(adapter):
+    async def scenario():
+        config = {"idiom_idle_timeout_seconds": 150}
+        context = Context()
+        plugin = adapter.PlaygroundPlugin(context, config)
+        now = [0]
+        plugin.clock = lambda: now[0]
+        start = Event()
+        await plugin.start_idiom(start)
+        scope = plugin._scope(start)
+        session = plugin.manager.get(scope)
+        assert session.game.deadline == 150
+        assert "150 秒" in start.sent[0][0].text
+        config["idiom_idle_timeout_seconds"] = 60
+        word = next(w for w in plugin.words if w != session.game.answer)
+        now[0] = 149
+        guess = Event(word)
+        await plugin.on_guess(guess)
+        assert session.game.deadline == 299
+        assert "150 秒" in guess.sent[0][0].text
+        await plugin.hint_idiom(Event())
+        assert session.game.deadline == 299
+        await plugin.on_guess(Event("今天吃饭"))
+        assert session.game.deadline == 299
+        now[0] = 299
+        await plugin._expire_scope(scope, session)
+        assert "150 秒" in context.sent[0][1]
+        assert not plugin.manager.sessions
+        await plugin.start_idiom(start)
+        assert plugin.manager.get(scope).game.deadline == 359
+        assert "60 秒" in start.sent[-1][0].text
+        await plugin.terminate()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize(
+    "seconds", [0, -1, float("inf"), float("nan"), True, None, "bad"]
+)
+def test_invalid_plugin_timeout_falls_back_to_default(adapter, seconds):
+    async def scenario():
+        plugin = adapter.PlaygroundPlugin(
+            Context(), {"idiom_idle_timeout_seconds": seconds}
+        )
+        plugin.clock = lambda: 0
+        start = Event()
+        await plugin.start_idiom(start)
+        assert plugin.manager.get(plugin._scope(start)).game.deadline == 300
+        assert "300 秒" in start.sent[0][0].text
+        await plugin.terminate()
+
+    asyncio.run(scenario())
+
+
+def test_fractional_seconds_are_not_converted_to_minutes(adapter):
+    async def scenario():
+        plugin = adapter.PlaygroundPlugin(
+            Context(), {"idiom_idle_timeout_seconds": 2.5}
+        )
+        plugin.clock = lambda: 10
+        event = Event()
+        await plugin.start_idiom(event)
+        assert plugin.manager.get(plugin._scope(event)).game.deadline == 12.5
+        assert "2.5 秒" in event.sent[0][0].text
+        await plugin.terminate()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("ending", ["timeout", "stopped"])
+@pytest.mark.parametrize("has_guess", [False, True])
+def test_terminal_answer_is_delivered_as_an_image(
+    adapter, monkeypatch, ending, has_guess
+):
+    async def scenario():
+        context = Context()
+        plugin = adapter.PlaygroundPlugin(context)
+        now = [0]
+        plugin.clock = lambda: now[0]
+        start = Event()
+        await plugin.start_idiom(start)
+        scope = plugin._scope(start)
+        session = plugin.manager.get(scope)
+        if has_guess:
+            word = next(w for w in plugin.words if w != session.game.answer)
+            await plugin.on_guess(Event(word))
+        rendered = []
+
+        def render(game):
+            rendered.append((game.status, len(game.guesses)))
+            return b"ANSWER-BOARD"
+
+        monkeypatch.setattr(adapter, "render_board", render)
+        if ending == "timeout":
+            now[0] = session.game.deadline
+            await plugin._expire_scope(scope, session)
+            chain = context.chains[-1]
+        else:
+            await plugin.stop_idiom(start)
+            chain = start.sent[-1]
+        assert rendered == [(ending, int(has_guess))]
+        assert chain[-1] == ("image", b"ANSWER-BOARD")
+        assert session.game.answer not in "".join(
+            c.text for c in chain if isinstance(c, Plain)
+        )
+        assert not plugin.manager.sessions
         await plugin.terminate()
 
     asyncio.run(scenario())

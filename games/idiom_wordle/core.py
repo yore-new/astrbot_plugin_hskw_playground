@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import json
+import math
 import random
 import re
 from collections import Counter
@@ -141,6 +142,7 @@ class IdiomGame:
     answer: str
     words: dict[str, str] = field(repr=False)
     deadline: float
+    idle_seconds: float = IDLE_SECONDS
     guesses: list[Guess] = field(default_factory=list)
     status: str = "playing"
     game_id: str = field(default="idiom_wordle", init=False)
@@ -153,7 +155,16 @@ class IdiomGame:
         now: float,
         words: dict[str, str] | None = None,
         answer: str | None = None,
+        idle_seconds: float = IDLE_SECONDS,
     ) -> IdiomGame:
+        try:
+            if isinstance(idle_seconds, bool):
+                raise ValueError("Boolean timeout is invalid")
+            idle_seconds = float(idle_seconds)
+        except (TypeError, ValueError, OverflowError) as exc:
+            raise ValueError("Idle timeout must be finite and positive") from exc
+        if not math.isfinite(idle_seconds) or idle_seconds <= 0:
+            raise ValueError("Idle timeout must be finite and positive")
         words = load_words() if words is None else words
         if not words:
             raise ValueError("Empty answer dictionary")
@@ -161,7 +172,7 @@ class IdiomGame:
         if answer not in words:
             raise ValueError("Answer must be in the dictionary")
         evaluate(answer, answer, words)
-        return cls(answer, words, now + IDLE_SECONDS)
+        return cls(answer, words, now + idle_seconds, idle_seconds=idle_seconds)
 
     def expire(self, now: float) -> bool:
         if self.status == "playing" and now >= self.deadline:
@@ -173,8 +184,10 @@ class IdiomGame:
         if self.expire(now) or self.status != "playing":
             return "ended"
         text = text.strip()
-        if not is_candidate(text, len(self.answer)):
+        if len(text) != len(self.answer):
             return "invalid"
+        if text not in self.words:
+            return "not_idiom"
         if any(g.text == text for g in self.guesses):
             return "duplicate"
         try:
@@ -182,7 +195,7 @@ class IdiomGame:
         except ValueError:
             return "invalid"
         self.guesses.append(Guess(text, cells))
-        self.deadline = now + IDLE_SECONDS
+        self.deadline = now + self.idle_seconds
         if text == self.answer:
             self.status = "won"
         elif len(self.guesses) == MAX_GUESSES:

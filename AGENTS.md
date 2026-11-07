@@ -6,6 +6,7 @@ This repository is an AstrBot Python plugin providing chat games.
 
 - `main.py`: AstrBot commands, message routing, and plugin lifecycle management.
 - `game_manager.py`: framework-independent game registry and chat scopes.
+- `_conf_schema.json`: AstrBot settings schema; adapt configuration at framework boundaries.
 - `games/<game_id>/`: one self-contained directory per game, including implementation, resources, tests, and `README.md`.
 - `tests/`: shared registry and AstrBot adapter contract tests.
 
@@ -33,6 +34,10 @@ Use four-space indentation, `snake_case` functions and variables, and `PascalCas
 Scope games by platform instance and group; private chats use sender IDs. All game types share the registry, allowing one active game per scope. Serialize state changes and responses within each scope; stale callbacks must never remove replacement sessions.
 
 Test game-specific rules alongside shared concerns: state transitions, concurrency, isolation, and failure handling. Inject clocks for time-dependent behavior rather than waiting in tests. Inspect generated images when changing rendering. Keep runtime files outside plugin source directories and retain licenses for external resources.
+
+When changing input validation or presentation, verify state and timing side effects alongside displayed output. Keep rendered summaries separate from recorded player actions, and check both interactive responses and background notifications. Apply presentation requirements to failure paths as well as successful responses.
+
+When adding configuration, keep schema defaults and runtime fallbacks consistent. Document units, validation, and when changes take effect. When changing units, update schema keys, runtime handling, messages, and tests together. Read-only commands must derive their output from public state without advancing progress or refreshing activity deadlines.
 
 ## Reusable Development Workflow
 
