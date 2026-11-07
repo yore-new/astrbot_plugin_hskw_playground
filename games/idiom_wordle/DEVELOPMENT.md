@@ -3,7 +3,7 @@
 ## 模块边界
 
 `core.py` 负责初始化、猜词、拼音匹配和状态转换，不导入 AstrBot，不执行消息发送。
-`resources/idioms.json` 是手工整理的常见成语及数字声调读音。
+`resources/idioms.json` 是从 Handle 源文件生成的 29,760 条成语及数字声调读音。
 每局答案从该词库选择；猜测接受任意可解析的四字汉字，不要求属于词库。
 词库拼音覆盖自动转换结果；相同汉字采用答案读音，参考 Handle。
 
@@ -70,3 +70,21 @@ CLI 在输入时检查超时；主动超时通知由插件后台调度实现。
 - 真实宿主：插件加载、非 @ 群猜词、图片发送、主动超时通知、重载后可重新开始。
 
 当前自动测试使用 AstrBot 替身，不代表真实平台已联调通过。
+
+## 词库同步流程
+
+`resources/handle/` 保存同一上游 commit 的 `idioms.txt` 与 `polyphones.json`，
+版本、校验值、作者和许可记录于该目录 `SOURCES.md`。
+`update_dictionary.py` 提供独立 Python 转换函数及离线生成入口：
+
+```sh
+.venv/bin/python -m games.idiom_wordle.update_dictionary
+.venv/bin/python -m pytest games/idiom_wordle/tests -q
+```
+
+生成时合并两份互不包含的词库，排序去重，自动生成普通读音，优先采用上游多音字读音，
+最后应用 `resources/pronunciation_overrides.json`。缺省声调补为轻声 5。
+生成前校验全部词条和读音；错误会中止，不静默删除词条。
+默认词库全部参与随机出题，生僻词难度会高于原来的 30 词版本。
+普通读音未经逐词人工校对；修正写入覆盖文件后重新生成，避免下一次同步覆盖。
+词库更新测试检查全部上游词条均已收录、多音字、轻声以及本地覆盖优先级。

@@ -26,7 +26,9 @@ AstrBot 插件。每个群共同玩一局，不同群、平台实例及私聊互
 游戏状态只存内存，机器人重启或插件重载会结束现有游戏。
 图片在内存中绘制并发送，不向插件目录写运行时文件。超时通知使用开局消息的路由，
 部分平台可能限制主动发送；即使通知失败，游戏仍会结束并释放。
-当前自带 30 个常见答案，可在游戏词库中扩展并校对数字声调拼音。
+当前自带 Handle 词库的 29,760 条四字成语，包含普通词库与多音字词库。
+普通词条由 pypinyin 生成读音，多音字使用上游校正；本地读音覆盖优先。
+词库版本、许可及离线更新命令见 [词库来源说明](games/idiom_wordle/resources/handle/SOURCES.md)。
 
 ## 本地开发与调试
 
@@ -51,7 +53,7 @@ python3 -m venv .venv
 ## 来源与许可
 
 游戏设计及拼音匹配规则参考 [汉兜 Handle / Anthony Fu](https://github.com/antfu/handle)
-及 [在线游戏](https://handle.antfu.me/)。拼音判定按 Handle 的算法移植为 Python，保留 [原始 MIT 许可](games/idiom_wordle/LICENSE.Handle)；小型答案库在本仓库整理。
+及 [在线游戏](https://handle.antfu.me/)。拼音判定按 Handle 的算法移植为 Python，保留 [原始 MIT 许可](games/idiom_wordle/LICENSE.Handle)；成语及多音字数据也来自 Handle，保留同一 MIT 许可。
 遵循 [AstrBot 开发指南](https://docs.astrbot.app/dev/star/plugin-new.html)。
 代码沿用仓库 AGPL-3.0 许可，见 [LICENSE](LICENSE)。
 随附中文字体来自 [Noto CJK](https://github.com/notofonts/noto-cjk)，
